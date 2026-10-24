@@ -60,6 +60,27 @@ const CJK_SC: &[(&str, u32)] = &[
     ("/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc", 0),
     ("/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf", 0),
 ];
+/// Japanese fallback. Kana exist in every CJK face, but kanji glyph variants differ between
+/// languages (直, 認, 概…), so the interface's own language decides which CJK face comes first;
+/// the other stays as a later fallback for Han codepoints the first one lacks. Face 0 of the
+/// Noto Sans CJK collection is its Japanese face.
+const CJK_JA: &[(&str, u32)] = &[
+    ("/System/Library/Fonts/ヒラギノ角ゴシック ProN.ttc", 0),
+    ("/System/Library/Fonts/Hiragino Kaku Gothic ProN.ttc", 0),
+    ("/System/Library/Fonts/Supplemental/Osaka.ttf", 0),
+    ("/System/Library/Fonts/Supplemental/Arial Unicode.ttf", 0),
+    ("C:\\Windows\\Fonts\\meiryo.ttc", 0),
+    ("C:\\Windows\\Fonts\\meiryo.ttf", 0),
+    ("C:\\Windows\\Fonts\\YuGothM.ttc", 0),
+    ("C:\\Windows\\Fonts\\YuGothR.ttc", 0),
+    ("C:\\Windows\\Fonts\\msgothic.ttc", 0),
+    ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0),
+    ("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", 0),
+    ("/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc", 0),
+    ("/usr/share/fonts/truetype/vlgothic/VL-PGothic-Regular.ttf", 0),
+    ("/usr/share/fonts/truetype/takao-gothic/TakaoPGothic.ttf", 0),
+    ("/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf", 0),
+];
 /// Font files larger than this are skipped: egui keeps the whole file in memory.
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_FONT_BYTES: u64 = 64 << 20;
@@ -127,9 +148,15 @@ fn load(_: &[(&str, u32)], _: &str, _: Option<&str>, _: bool) -> Option<FontData
 }
 
 /// The font set: egui's bundled faces plus the system's when `system_fonts` is true — the desktop
-/// UI font for regular and bold, then the Simplified Chinese and Hangul fallbacks appended to
-/// every family.
+/// UI font for regular and bold, then the Simplified Chinese, Japanese and Hangul fallbacks
+/// appended to every family. The interface's language decides the CJK order (see [`CJK_JA`]);
+/// call again after a language switch.
 pub fn definitions(system_fonts: bool) -> FontDefinitions {
+    definitions_for(soundcraft_l10n::current(), system_fonts)
+}
+
+/// [`definitions`] for an explicit language (tests, and the app before the global is read).
+pub fn definitions_for(lang: soundcraft_l10n::Language, system_fonts: bool) -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     let base: Vec<String> = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     let mut bold_family = base.clone();
@@ -146,13 +173,20 @@ pub fn definitions(system_fonts: bool) -> FontDefinitions {
         bold_family.insert(0, "system-regular".into());
     }
     fonts.families.insert(FontFamily::Name("bold".into()), bold_family);
-    // Simplified Chinese before Hangul, so Han glyphs prefer the Simplified face (see CJK_SC).
-    // The lang check is exact: a Traditional-only face would render the simplified interface
-    // with Traditional glyph variants; such systems fall through to the candidate list below.
-    if let Some(c) = load(CJK_SC, "sans-serif:lang=zh-cn", Some("zh-cn"), system_fonts) {
-        fonts.font_data.insert("system-cjk".into(), Arc::new(c));
-        for family in fonts.families.values_mut() {
-            family.push("system-cjk".into());
+    // The interface language's CJK face comes first, the other one after: the lang checks are
+    // exact (a Traditional-only face would render zh-Hans with Traditional variants), and such
+    // systems fall through to the candidate lists. Han glyphs take the first face's variants.
+    let (primary, secondary) = match lang {
+        soundcraft_l10n::Language::Japanese => ((CJK_JA, "ja", "system-cjk-ja"), (CJK_SC, "zh-cn", "system-cjk-sc")),
+        _ => ((CJK_SC, "zh-cn", "system-cjk-sc"), (CJK_JA, "ja", "system-cjk-ja")),
+    };
+    for (cands, want, key) in [primary, secondary] {
+        let pattern = format!("sans-serif:lang={want}");
+        if let Some(c) = load(cands, &pattern, Some(want), system_fonts) {
+            fonts.font_data.insert(key.into(), Arc::new(c));
+            for family in fonts.families.values_mut() {
+                family.push(key.into());
+            }
         }
     }
     if let Some(h) = load(HANGUL, "sans-serif:lang=ko", Some("ko"), system_fonts) {
@@ -165,7 +199,12 @@ pub fn definitions(system_fonts: bool) -> FontDefinitions {
 }
 
 pub fn install(ctx: &egui::Context, system_fonts: bool) {
-    ctx.set_fonts(definitions(system_fonts));
+    install_for(ctx, soundcraft_l10n::current(), system_fonts);
+}
+
+/// [`install`] for an explicit language (startup, before the global is in sync).
+pub fn install_for(ctx: &egui::Context, lang: soundcraft_l10n::Language, system_fonts: bool) {
+    ctx.set_fonts(definitions_for(lang, system_fonts));
 }
 
 #[cfg(test)]
@@ -208,15 +247,17 @@ mod tests {
     fn cjk_candidates_cover_every_desktop_platform() {
         for prefix in ["/System/Library/Fonts/", "C:\\Windows\\Fonts\\", "/usr/share/fonts/"] {
             assert!(CJK_SC.iter().any(|(p, _)| p.starts_with(prefix)), "no Simplified Chinese candidate under {prefix}");
+            assert!(CJK_JA.iter().any(|(p, _)| p.starts_with(prefix)), "no Japanese candidate under {prefix}");
         }
-        // The Korean face is 1 and the Japanese face 0; the Simplified Chinese face is 2.
+        // The Korean face is 1, the Simplified Chinese face 2 and the Japanese face 0.
         assert!(CJK_SC.iter().filter(|(p, _)| p.ends_with("NotoSansCJK-Regular.ttc")).all(|(_, i)| *i == 2));
+        assert!(CJK_JA.iter().filter(|(p, _)| p.ends_with("NotoSansCJK-Regular.ttc")).all(|(_, i)| *i == 0));
     }
 
     /// Korean names draw in every family, not as boxes; skipped when the system has no Korean font.
     #[test]
     fn every_family_draws_hangul_with_a_system_korean_font() {
-        let defs = definitions(true);
+        let defs = definitions_for(soundcraft_l10n::Language::English, true);
         if !defs.font_data.contains_key("system-hangul") {
             eprintln!("skipping: no Korean system font");
             return;
@@ -236,8 +277,8 @@ mod tests {
     /// when the system has no Simplified Chinese font.
     #[test]
     fn every_family_draws_chinese_with_a_system_cjk_font() {
-        let defs = definitions(true);
-        if !defs.font_data.contains_key("system-cjk") {
+        let defs = definitions_for(soundcraft_l10n::Language::SimplifiedChinese, true);
+        if !defs.font_data.contains_key("system-cjk-sc") {
             eprintln!("skipping: no Simplified Chinese system font");
             return;
         }
@@ -249,6 +290,43 @@ mod tests {
         for family in families {
             let font = egui::FontId::new(13.0, family.clone());
             assert!(ctx.fonts_mut(|f| f.has_glyphs(&font, "并轨混音轨道剪")), "{family:?} has no Chinese");
+        }
+    }
+
+    /// Kana and kanji draw with the Japanese face first when the interface language is Japanese.
+    #[test]
+    fn japanese_is_the_first_cjk_face_for_japanese() {
+        let defs = definitions_for(soundcraft_l10n::Language::Japanese, true);
+        if !defs.font_data.contains_key("system-cjk-ja") {
+            eprintln!("skipping: no Japanese system font");
+            return;
+        }
+        let families: Vec<FontFamily> = defs.families.keys().cloned().collect();
+        let ctx = egui::Context::default();
+        ctx.set_fonts(defs);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        for family in families {
+            let font = egui::FontId::new(13.0, family.clone());
+            assert!(ctx.fonts_mut(|f| f.has_glyphs(&font, "カタカナひらがな漢字")), "{family:?} has no Japanese");
+        }
+    }
+
+    /// For Japanese the Japanese face precedes the Simplified Chinese one in every family (and
+    /// the other way round otherwise); only meaningful when the system has both faces.
+    #[test]
+    fn the_interface_language_orders_the_cjk_faces() {
+        let ja = definitions_for(soundcraft_l10n::Language::Japanese, true);
+        let zh = definitions_for(soundcraft_l10n::Language::SimplifiedChinese, true);
+        if !(ja.font_data.contains_key("system-cjk-ja") && ja.font_data.contains_key("system-cjk-sc")) {
+            eprintln!("skipping: the system has only one CJK face");
+            return;
+        }
+        for (defs, first, second) in [(ja, "system-cjk-ja", "system-cjk-sc"), (zh, "system-cjk-sc", "system-cjk-ja")] {
+            let family = defs.families.get(&FontFamily::Proportional).expect("proportional family");
+            let a = family.iter().position(|n| n == first).expect("first CJK face in family");
+            let b = family.iter().position(|n| n == second).expect("second CJK face in family");
+            assert!(a < b, "{first} must come before {second}");
         }
     }
 }

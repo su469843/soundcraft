@@ -145,7 +145,7 @@ pub struct UiState {
     pub configurations: Vec<(String, Value)>,
     /// Appearance (`ui.theme`): dark by default, light or follow the system on request.
     pub theme: theme::ThemeMode,
-    /// Interface language (`ui.language`): a BCP 47 id ("en", "zh-Hans"), English until changed.
+    /// Interface language (`ui.language`): a BCP 47 id ("en", "zh-Hans", "ja"), English until changed.
     pub language: String,
     /// The main window's size (logical points) and maximized state, and the interface scale, as
     /// the desktop app last saw them; it restores them at launch.
@@ -402,6 +402,9 @@ pub struct SoundApp {
     fonts_installed: bool,
     /// Whether the system fonts are loaded next to the bundled ones; set before the first frame.
     system_fonts: bool,
+    /// The language the fonts were built for: a switch rebuilds them with the CJK face order
+    /// the new language needs.
+    font_language: Option<soundcraft_l10n::Language>,
     /// The palette last applied to the context (light?), so visuals are set only on a change.
     theme_applied: Option<bool>,
     /// Last panel host context, used to cancel renderer-owned gestures on explicit replacement.

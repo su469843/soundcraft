@@ -100,6 +100,7 @@ impl SoundApp {
             fonts_ready: false,
             fonts_installed: false,
             system_fonts: true,
+            font_language: None,
             theme_applied: None,
             docking_context: None,
             sim: None,
@@ -139,14 +140,17 @@ impl SoundApp {
     /// Each host iteration starts with `raw_input_hook`; its editor-poll admission prevents an
     /// empty queue on a discarded pass from ending a still-active plugin gesture.
     pub fn logic(&mut self, ctx: &egui::Context) {
-        self.ui.undo_levels = self.ui.undo_levels.clamp(1, 64);
+self.ui.undo_levels = self.ui.undo_levels.clamp(1, 64);
         self.engine.set_history_limit(self.ui.undo_levels);
-        // Fonts set now take effect next frame, so draw only from the frame after.
+        // Fonts set now take effect next frame, so draw only from the frame after. Built for the
+        // saved language right away: the CJK face order follows it (see `fonts`).
         if !self.fonts_ready {
             if self.fonts_installed {
                 self.fonts_ready = true;
             } else {
-                fonts::install(ctx, self.system_fonts);
+                let lang = soundcraft_l10n::Language::parse(&self.ui.language).unwrap_or_default();
+                fonts::install_for(ctx, lang, self.system_fonts);
+                self.font_language = Some(lang);
                 self.fonts_installed = true;
                 ctx.request_repaint();
             }
@@ -178,6 +182,13 @@ impl SoundApp {
         // a restored ui.json) rather than set through `ui.language` — after the drain above, so
         // a request that just landed applies to this frame's draw and menu rebuild check.
         soundcraft_l10n::set_current(soundcraft_l10n::Language::parse(&self.ui.language).unwrap_or_default());
+        // The CJK face order follows the language; rebuild the fonts (taking effect next frame)
+        // when it changed. The startup install above already covers the first frame.
+        let language = soundcraft_l10n::current();
+        if self.font_language != Some(language) {
+            fonts::install(ctx, self.system_fonts);
+            self.font_language = Some(language);
+        }
         self.note_recent_session();
         self.apply_editor_edits();
         // A multi-pass frame runs this logic once per pass; bounce slices and background-import
