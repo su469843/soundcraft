@@ -13,6 +13,7 @@
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU8, Ordering};
 
+mod ja;
 mod zh_hans;
 
 /// A supported interface language.
@@ -23,17 +24,20 @@ pub enum Language {
     English,
     /// 简体中文 (Simplified Chinese).
     SimplifiedChinese,
+    /// 日本語 (Japanese).
+    Japanese,
 }
 
 impl Language {
     /// Every supported language, in menu order.
-    pub const ALL: [Language; 2] = [Language::English, Language::SimplifiedChinese];
+    pub const ALL: [Language; 3] = [Language::English, Language::SimplifiedChinese, Language::Japanese];
 
     /// BCP 47 id, as stored in preferences and taken by `ui.language`.
     pub fn id(self) -> &'static str {
         match self {
             Language::English => "en",
             Language::SimplifiedChinese => "zh-Hans",
+            Language::Japanese => "ja",
         }
     }
 
@@ -42,15 +46,17 @@ impl Language {
         match self {
             Language::English => "English",
             Language::SimplifiedChinese => "简体中文",
+            Language::Japanese => "日本語",
         }
     }
 
     /// Parses an id from preferences or a control request; `zh`, `zh-CN` and `zh-Hans-CN` mean
-    /// zh-Hans, the only Chinese the interface ships.
+    /// zh-Hans, the only Chinese the interface ships; `ja-JP` means Japanese, the only Japanese.
     pub fn parse(id: &str) -> Option<Language> {
         match id.trim().to_ascii_lowercase().as_str() {
             "en" | "en-us" => Some(Language::English),
             "zh" | "zh-cn" | "zh-hans" | "zh-hans-cn" => Some(Language::SimplifiedChinese),
+            "ja" | "ja-jp" => Some(Language::Japanese),
             _ => None,
         }
     }
@@ -61,6 +67,7 @@ impl Language {
         match self {
             Language::English => s,
             Language::SimplifiedChinese => zh_hans::get(s).unwrap_or(s),
+            Language::Japanese => ja::get(s).unwrap_or(s),
         }
     }
 
@@ -70,6 +77,7 @@ impl Language {
         match self {
             Language::English => Cow::Borrowed(s),
             Language::SimplifiedChinese => zh_hans::get(s).map(Cow::Borrowed).unwrap_or_else(|| Cow::Borrowed(s)),
+            Language::Japanese => ja::get(s).map(Cow::Borrowed).unwrap_or_else(|| Cow::Borrowed(s)),
         }
     }
 
@@ -79,6 +87,7 @@ impl Language {
         match self {
             Language::English => true,
             Language::SimplifiedChinese => zh_hans::get(s).is_some(),
+            Language::Japanese => ja::get(s).is_some(),
         }
     }
 }
@@ -88,6 +97,7 @@ fn rank(lang: Language) -> u8 {
     match lang {
         Language::English => 0,
         Language::SimplifiedChinese => 1,
+        Language::Japanese => 2,
     }
 }
 
@@ -98,6 +108,7 @@ static CURRENT: AtomicU8 = AtomicU8::new(0);
 pub fn current() -> Language {
     match CURRENT.load(Ordering::Relaxed) {
         1 => Language::SimplifiedChinese,
+        2 => Language::Japanese,
         _ => Language::English,
     }
 }
@@ -142,6 +153,8 @@ mod tests {
         assert_eq!(Language::parse("zh"), Some(Language::SimplifiedChinese));
         assert_eq!(Language::parse("zh-CN"), Some(Language::SimplifiedChinese));
         assert_eq!(Language::parse("zh-Hant"), None, "we ship no Traditional Chinese");
+        assert_eq!(Language::parse("ja"), Some(Language::Japanese));
+        assert_eq!(Language::parse("ja-JP"), Some(Language::Japanese));
         assert_eq!(Language::parse("de"), None);
         assert_eq!(Language::parse(""), None);
     }
@@ -160,31 +173,40 @@ mod tests {
         }
     }
 
-    /// Every zh-Hans entry is a real translation: non-empty, no stray whitespace. An entry
+    /// Every catalog entry is a real translation: non-empty, no stray whitespace. An entry
     /// identical to its key is allowed and means "stays English on purpose" (product names,
-    /// channel formats, Ambisonics orders); the menu-coverage test relies on that marking.
+    /// channel formats, Ambisonics orders); the menu-coverage tests rely on that marking.
     #[test]
-    fn zh_hans_entries_are_well_formed() {
-        for (en, zh) in zh_hans::ENTRIES {
-            assert!(!zh.is_empty(), "{en}: empty translation");
-            assert_eq!(zh.trim(), *zh, "{en}: translation has stray whitespace: {zh:?}");
-            assert!(!en.starts_with(' ') && !en.ends_with(' '), "key has stray whitespace: {en:?}");
+    fn entries_are_well_formed() {
+        for (name, entries) in [("zh-Hans", zh_hans::ENTRIES), ("ja", ja::ENTRIES)] {
+            for (en, tr) in entries {
+                assert!(!tr.is_empty(), "{name} {en}: empty translation");
+                assert_eq!(tr.trim(), *tr, "{name} {en}: translation has stray whitespace: {tr:?}");
+                assert!(!en.starts_with(' ') && !en.ends_with(' '), "{name}: key has stray whitespace: {en:?}");
+            }
         }
     }
 
     /// Keys stay in sync with the catalog match: ENTRIES and `get` must cover the same strings.
     #[test]
-    fn zh_hans_lookup_agrees_with_entries() {
-        for (en, zh) in zh_hans::ENTRIES {
-            assert_eq!(zh_hans::get(en), Some(*zh), "get() disagrees with ENTRIES for {en:?}");
+    fn lookup_agrees_with_entries() {
+        for (name, entries, get) in [
+            ("zh-Hans", zh_hans::ENTRIES, zh_hans::get as fn(&str) -> Option<&'static str>),
+            ("ja", ja::ENTRIES, ja::get as fn(&str) -> Option<&'static str>),
+        ] {
+            for (en, tr) in entries {
+                assert_eq!(get(en), Some(*tr), "{name}: get() disagrees with ENTRIES for {en:?}");
+            }
+            assert_eq!(get("no such key"), None, "{name}");
         }
-        assert_eq!(zh_hans::get("no such key"), None);
     }
 
     /// `get` builds a map, so a duplicate key would silently replace its twin.
     #[test]
-    fn zh_hans_has_no_duplicate_keys() {
-        assert_eq!(zh_hans::ENTRIES.len(), zh_hans::ENTRIES.iter().map(|(en, _)| *en).collect::<std::collections::HashSet<_>>().len());
+    fn catalogs_have_no_duplicate_keys() {
+        for (name, entries) in [("zh-Hans", zh_hans::ENTRIES), ("ja", ja::ENTRIES)] {
+            assert_eq!(entries.len(), entries.iter().map(|(en, _)| *en).collect::<std::collections::HashSet<_>>().len(), "{name} has duplicate keys");
+        }
     }
 
     /// Templates fill their placeholders. (Sets the global language; other tests pass explicit
@@ -196,5 +218,8 @@ mod tests {
         assert_eq!(tf("No template here", &[]), "No template here");
         // An unknown template falls back to English and still fills in.
         assert_eq!(tf("No {x} entry", &[("x", "zh")]), "No zh entry");
+        set_current(Language::Japanese);
+        assert_eq!(tf("Undo {step}", &[("step", "カット")]), "カット を取り消す");
+        assert_eq!(tf("{bars} bars", &[("bars", "4")]), "4 小節");
     }
 }

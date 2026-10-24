@@ -121,7 +121,7 @@ pub struct UiState {
     pub configurations: Vec<(String, Value)>,
     /// Appearance (`ui.theme`): dark by default, light or follow the system on request.
     pub theme: theme::ThemeMode,
-    /// Interface language (`ui.language`): a BCP 47 id ("en", "zh-Hans"), English until changed.
+    /// Interface language (`ui.language`): a BCP 47 id ("en", "zh-Hans", "ja"), English until changed.
     pub language: String,
     /// The main window's size (logical points) and maximized state, and the interface scale, as
     /// the desktop app last saw them; it restores them at launch.
@@ -316,7 +316,9 @@ pub struct SoundApp {
     pub(crate) pending_open: Option<(TrackId, usize)>,
     last_rev: u64,
     fonts_ready: bool,
-    fonts_installed: bool,
+    /// The language the fonts were built for: a switch rebuilds them with the CJK face order
+    /// the new language needs.
+    font_language: Option<soundcraft_l10n::Language>,
     /// The palette last applied to the context (light?), so visuals are set only on a change.
     theme_applied: Option<bool>,
     /// Last panel host context, used to cancel renderer-owned gestures on explicit replacement.
@@ -427,7 +429,7 @@ impl SoundApp {
             pending_open: None,
             last_rev: 0,
             fonts_ready: false,
-            fonts_installed: false,
+            font_language: None,
             theme_applied: None,
             docking_context: None,
             sim: None,
@@ -1214,15 +1216,15 @@ impl SoundApp {
         if ctx.current_pass_index() > 0 {
             return;
         }
-        // Fonts set now take effect next frame, so draw only from the frame after.
-        if !self.fonts_ready {
-            if self.fonts_installed {
-                self.fonts_ready = true;
-            } else {
-                fonts::install(ctx);
-                self.fonts_installed = true;
-                ctx.request_repaint();
-            }
+        // Fonts set now take effect next frame, so draw only from the frame after. Built for the
+        // saved language right away: the CJK face order follows it (see `fonts`).
+        if self.font_language.is_none() {
+            let lang = soundcraft_l10n::Language::parse(&self.ui.language).unwrap_or_default();
+            fonts::install_for(ctx, lang);
+            self.font_language = Some(lang);
+            ctx.request_repaint();
+        } else if !self.fonts_ready {
+            self.fonts_ready = true;
         }
         let light = theme::wants_light(ctx, self.ui.theme);
         if self.theme_applied != Some(light) || theme::is_light() != light {
@@ -1237,6 +1239,13 @@ impl SoundApp {
         // a restored ui.json) rather than set through `ui.language` — after the drain above, so
         // a request that just landed applies to this frame's draw and menu rebuild check.
         soundcraft_l10n::set_current(soundcraft_l10n::Language::parse(&self.ui.language).unwrap_or_default());
+        // The CJK face order follows the language; rebuild the fonts (taking effect next frame)
+        // when it changed. The startup install above already covers the first frame.
+        let language = soundcraft_l10n::current();
+        if self.font_language != Some(language) {
+            fonts::install(ctx);
+            self.font_language = Some(language);
+        }
         self.note_recent_session();
         self.apply_editor_edits();
         bounce::step(self, ctx);

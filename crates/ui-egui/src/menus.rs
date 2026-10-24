@@ -752,22 +752,26 @@ mod tests {
     use super::*;
     use crate::{Services, SoundApp};
 
-    /// Every node of the menu tree, and every UI command label, has a zh-Hans translation.
-    /// A new menu entry without one fails here — add it to `soundcraft-l10n`'s zh_hans table.
+    /// Every node of the menu tree, and every UI command label, has a translation in every
+    /// supported language. A new menu entry without one fails here — add it to
+    /// `soundcraft-l10n`'s tables.
     #[test]
-    fn menu_tree_and_ui_commands_are_translated_for_zh_hans() {
-        let zh = soundcraft_l10n::Language::SimplifiedChinese;
+    fn menu_tree_and_ui_commands_are_translated_for_every_language() {
         let roots = tree();
         let mut stack: Vec<&MenuNode> = roots.iter().collect();
         let mut seen: Vec<&str> = Vec::new();
         while let Some(n) = stack.pop() {
-            assert!(zh.covers(&n.label), "menu node {:?} has no zh-Hans translation", n.label);
             seen.push(&n.label);
             stack.extend(n.children.iter());
         }
         assert!(seen.len() > 400, "the menu tree shrunk? only {} nodes", seen.len());
-        for (_, label, _, _) in UI_COMMANDS {
-            assert!(zh.covers(label), "UI command label {label:?} has no zh-Hans translation");
+        for lang in soundcraft_l10n::Language::ALL {
+            for label in &seen {
+                assert!(lang.covers(label), "menu node {label:?} has no {} translation", lang.id());
+            }
+            for (_, label, _, _) in UI_COMMANDS {
+                assert!(lang.covers(label), "UI command label {label:?} has no {} translation", lang.id());
+            }
         }
     }
 
