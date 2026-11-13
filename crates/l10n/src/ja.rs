@@ -723,6 +723,15 @@ pub static ENTRIES: &[(&str, &str)] = &[
     ("Beat Analysis", "ビート解析"),
     ("Levels of Undo", "アンドゥレベル"),
     ("Reduce Visual Effects", "視覚効果を減らす"),
+    // ── Display names from `feature_names::display_label` (menu nodes) ──
+    ("Punch Recording", "パンチ録音"),
+    ("Tempo Sync", "テンポ同期"),
+    ("Shared Projects", "共有プロジェクト"),
+    ("No ARA plug-ins", "ARA プラグインなし"),
+    ("Analog Saturation", "アナログサチュレーション"),
+    ("Activate Analog Saturation", "アナログサチュレーションを有効化"),
+    ("MusicXML", "MusicXML"),
+    ("MusicXML...", "MusicXML..."),
     // ── Templates ({name} placeholders, filled by `tf`) ──
     ("Group {n}", "グループ {n}"),
     ("Shuffle is locked ({cmd}-click to unlock)", "Shuffle はロック中（{cmd}+クリックで解除）"),
